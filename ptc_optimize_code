@@ -1,0 +1,149 @@
+import numpy as np
+import pandas as pd
+from scipy.integrate import quad
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+
+# Configuration
+OUTPUT_CSV = "parabolic_trough_designs.csv"
+PLOT_FILE = "trough_optimization_dashboard.png"
+
+
+def calculate_geometry(width, rim_angle):
+    """Calculate all geometric parameters for given width and rim angle"""
+    length = 2 / width  # Enforce 2m² aperture
+    rim_angle_rad = np.radians(rim_angle)
+
+    # Focal length
+    f = width / (4 * np.tan(rim_angle_rad / 2))
+
+    # Parabola equation: y = (1/4f)x²
+    a = 1 / (4 * f)
+
+    # Maximum height (vertex to rim)
+    h = a * (width / 2) ** 2
+
+    # Arc length calculation
+    def integrand(u):
+        return np.sqrt(1 + (2 * a * u) ** 2)
+
+    arc_length, _ = quad(integrand, -width / 2, width / 2)
+
+    # Reflector area
+    surface_area = arc_length * length
+
+    return {
+        'Width': width,
+        'Length': length,
+        'Rim Angle': rim_angle,
+        'Focal Length': f,
+        'Parabola Height': h,
+        'Arc Length': arc_length,
+        'Surface Area': surface_area,
+        'Concentration Ratio': surface_area / 2,
+        'Aspect Ratio': length / width,
+        'Arc Angle': rim_angle_rad,
+        'Parabola Coefficient': a
+    }
+
+
+# Parameter ranges
+angles = np.linspace(70, 80, 11)  # 70-80° in 1° steps
+widths = np.linspace(0.5, 1.5, 21)  # 0.5-1.5m in 0.05m steps
+
+# Generate all combinations
+results = []
+for angle in angles:
+    for w in widths:
+        try:
+            geo = calculate_geometry(w, angle)
+            results.append(geo)
+        except:
+            continue
+
+# Create DataFrame and sort
+df = pd.DataFrame(results).sort_values('Surface Area', ascending=False)
+
+# Save full calculations with all geometric parameters
+df.to_csv(OUTPUT_CSV, index=False, float_format='%.5f')
+
+# Visualization setup
+plt.figure(figsize=(18, 12))
+plt.suptitle('Parabolic Trough Design Optimization\n(Aperture Area = 2m² Constant)',
+             y=1.02, fontsize=16, fontweight='bold')
+
+# Custom colormap
+cmap = LinearSegmentedColormap.from_list('performance', ['#3498db', '#f1c40f', '#e74c3c'])
+
+# 1. Main Performance Plot
+ax1 = plt.subplot(2, 2, 1)
+sc1 = ax1.scatter(df['Width'], df['Rim Angle'],
+                  c=df['Surface Area'], cmap=cmap,
+                  s=80, edgecolor='w', linewidth=0.5)
+plt.colorbar(sc1, ax=ax1, label='Reflective Surface Area (m²)')
+ax1.set_xlabel('Trough Width (m)', fontsize=12)
+ax1.set_ylabel('Rim Angle (°)', fontsize=12)
+ax1.set_title('Optimal Design Space', pad=12)
+
+# Highlight top 5 designs
+top5 = df.head().copy()
+ax1.scatter(top5['Width'], top5['Rim Angle'],
+            s=200, marker='*', color='#2ecc71',
+            edgecolor='k', label='Top 5 Designs')
+ax1.legend()
+
+# 2. Geometry Relationships
+ax2 = plt.subplot(2, 2, 2)
+for angle in [70, 75, 80]:
+    subset = df[df['Rim Angle'] == angle]
+    ax2.plot(subset['Width'], subset['Focal Length'],
+             'o-', label=f'{angle}° Rim Angle')
+ax2.set_xlabel('Width (m)', fontsize=12)
+ax2.set_ylabel('Focal Length (m)', fontsize=12)
+ax2.set_title('Focal Length Variation', pad=12)
+ax2.grid(True, alpha=0.3)
+ax2.legend()
+
+# 3. Cross-Section Profile
+ax3 = plt.subplot(2, 2, 3)
+sample_design = df.iloc[0]  # Best design
+x = np.linspace(-sample_design['Width'] / 2, sample_design['Width'] / 2, 100)
+y = sample_design['Parabola Coefficient'] * x ** 2
+ax3.plot(x, y, lw=3, color='#9b59b6')
+ax3.fill_between(x, 0, y, color='#e0c6f5', alpha=0.5)
+ax3.set_aspect('equal')
+ax3.set_xlabel('Width (m)', fontsize=12)
+ax3.set_ylabel('Height (m)', fontsize=12)
+ax3.set_title(f'Best Design Profile\n(Width={sample_design["Width"]:.2f}m, Angle={sample_design["Rim Angle"]}°)',
+              pad=12)
+ax3.grid(True, alpha=0.3)
+
+# Add focal point marker
+ax3.plot(0, sample_design['Focal Length'], 'ro', markersize=8)
+ax3.annotate('Focal Point', xy=(0, sample_design['Focal Length']),
+             xytext=(0.2, sample_design['Focal Length'] + 0.1),
+             arrowprops=dict(arrowstyle='->'))
+
+# 4. Parameter Importance
+ax4 = plt.subplot(2, 2, 4)
+correlations = df[['Surface Area', 'Width', 'Rim Angle', 'Focal Length', 'Parabola Height']].corr()[
+    'Surface Area'].drop('Surface Area')
+correlations.plot(kind='bar', color=['#3498db', '#e67e22', '#2ecc71', '#f1c40f'])
+ax4.set_ylabel('Correlation with Surface Area', fontsize=12)
+ax4.set_title('Parameter Impact Analysis', pad=12)
+ax4.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig(PLOT_FILE, dpi=300, bbox_inches='tight')
+
+# Print summary
+print(f"\n{' OPTIMAL DESIGN RESULTS ':=^80}")
+print(f"\nTotal evaluated designs: {len(df)}")
+print(f"Top surface area achieved: {df['Surface Area'].max():.4f} m²")
+print(f"Best concentration ratio: {df['Concentration Ratio'].max():.3f}x")
+
+print("\nTop 5 Configurations:")
+print(top5[['Width', 'Length', 'Rim Angle', 'Surface Area', 'Concentration Ratio']].to_string(index=False))
+
+print(f"\nFull geometric calculations saved to '{OUTPUT_CSV}'")
+print(f"Visualization dashboard saved to '{PLOT_FILE}'")
